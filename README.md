@@ -122,6 +122,14 @@ MySQL and publishes every risk evaluation to `system-alerts`.
 python dashboard/import_dashboard.py   # pushes dashboard to http://localhost:3000 (admin:admin)
 ```
 
+## Grafana Dashboard
+
+Live view of the `EV Charging Risk Monitoring` dashboard backed by MySQL:
+
+![Risk overview — events, active alerts, avg risk score, critical count, risk-level distribution and average delay per city](dashboard/grafana-risk-overview.png)
+
+![Recent alerts table — station, city, risk level, score and reason](dashboard/grafana-recent-alerts.png)
+
 ## Kafka Topics
 
 | Topic | Key | Value |
@@ -140,7 +148,7 @@ python dashboard/import_dashboard.py   # pushes dashboard to http://localhost:30
 ├── data/                      # app_events.csv, charging_sessions.csv, station_telemetry.csv
 ├── docs/                      # app_events_rules.md (data dictionary + rules)
 ├── validation/                # validate_app_events.py (18 invariants + distributions)
-├── dashboard/                 # import_dashboard.py (+ dashboard_ev_risk.json)
+├── dashboard/                 # import_dashboard.py, dashboard_ev_risk.json, Grafana screenshots
 ├── README.md
 └── requirements.txt           # pandas, kafka-python
 ```
