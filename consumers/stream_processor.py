@@ -32,7 +32,10 @@ from typing import Any, Dict
 
 from kafka import KafkaConsumer, KafkaProducer
 
-from risk_engine import evaluate
+try:
+    from risk_engine import evaluate
+except ImportError:  # run as `python -m consumers.stream_processor` from root
+    from consumers.risk_engine import evaluate
 from mysql_writer import MySQLWriter
 
 

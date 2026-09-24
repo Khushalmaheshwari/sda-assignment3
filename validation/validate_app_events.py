@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
-PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "app_events.csv"
+DEFAULT_PATH = Path(__file__).resolve().parents[1] / "data" / "app_events.csv"
+PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
 if not PATH.exists():
     sys.exit(f"not found: {PATH}")
 

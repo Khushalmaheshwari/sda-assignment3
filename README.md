@@ -8,35 +8,35 @@ a Grafana dashboard.
 ## Architecture
 
 ```
-generate_*.py / *_data_generator.py
+generators/ ──► data/*.csv
         │  (CSV datasets)
         ▼
-app_producer.py ──► Kafka: app-events ──┐
-charging_producer.py ─► Kafka: charging-telemetry ─┼─► stream_processor.py ─► Kafka: system-alerts
-station_producer.py ──► Kafka: station-telemetry ──┘        │
-                                                    risk_engine.py   MySQL (EV-Stations) ─► Grafana
+producers/app_producer.py ──► Kafka: app-events ──┐
+producers/charging_producer.py ─► Kafka: charging-telemetry ─┼─► consumers/stream_processor.py ─► Kafka: system-alerts
+producers/station_producer.py ──► Kafka: station-telemetry ──┘        │
+                                                     consumers/risk_engine.py   MySQL (EV-Stations) ─► Grafana
 ```
 
 | Component | Consumes | Produces / Writes |
 |---|---|---|
-| `app_producer.py` | `app_events.csv` | Kafka `app-events` (key: `city` or `journey_id`) |
-| `charging_producer.py` | `charging_sessions.csv` | Kafka `charging-telemetry` (key: `selected_site_id`) |
-| `station_producer.py` | `station_telemetry.csv` | Kafka `station-telemetry` (key: `selected_site_id`) |
-| `stream_processor.py` | all 3 topics | Kafka `system-alerts` + MySQL tables |
+| `producers/app_producer.py` | `data/app_events.csv` | Kafka `app-events` (key: `city` or `journey_id`) |
+| `producers/charging_producer.py` | `data/charging_sessions.csv` | Kafka `charging-telemetry` (key: `selected_site_id`) |
+| `producers/station_producer.py` | `data/station_telemetry.csv` | Kafka `station-telemetry` (key: `selected_site_id`) |
+| `consumers/stream_processor.py` | all 3 topics | Kafka `system-alerts` + MySQL tables |
 
 ## Datasets
 
 | File | Rows | Description | Generator |
 |---|---|---|---|
-| `app_events.csv` | 31,264 (11,000 journeys) | Mobile-app funnel: `SEARCH → VIEW_STATION → NAVIGATE → RESERVE → START_CHARGE / ABANDON` | `generate_app_events.py` (seed 7) |
-| `charging_sessions.csv` | 4,265 | One session per `START_CHARGE`; energy, power, expected vs actual duration, delay ratio | `charging_data_generator.py` (seed 42) |
-| `station_telemetry.csv` | 40,270 | 5-min station snapshots: bays, queue, wait, utilization, incidents | `station_data_generator.py` (seed 42, `--interval 5`) |
+| `data/app_events.csv` | 31,264 (11,000 journeys) | Mobile-app funnel: `SEARCH → VIEW_STATION → NAVIGATE → RESERVE → START_CHARGE / ABANDON` | `generators/generate_app_events.py` (seed 7) |
+| `data/charging_sessions.csv` | 4,265 | One session per `START_CHARGE`; energy, power, expected vs actual duration, delay ratio | `generators/charging_data_generator.py` (seed 42) |
+| `data/station_telemetry.csv` | 40,270 | 5-min station snapshots: bays, queue, wait, utilization, incidents | `generators/station_data_generator.py` (seed 42, `--interval 5`) |
 
 Window: 3–16 Aug 2026 (14 days). Sites: 10 across Delhi, Mumbai, Gurugram, Jaipur, Bengaluru.
 Full schema, funnel rules, and the 18 data invariants are documented in
-[`app_events_rules.md`](app_events_rules.md). Validate with `validate_app_events.py`.
+[`docs/app_events_rules.md`](docs/app_events_rules.md). Validate with `validation/validate_app_events.py`.
 
-## Risk Engine (`risk_engine.py`)
+## Risk Engine (`consumers/risk_engine.py`)
 
 Multiplicative score — operational problems compound each other:
 
@@ -73,18 +73,18 @@ docker compose up -d   # or your own broker
 CSVs are committed, so this is optional. Seeds are fixed → reproducible.
 
 ```bash
-python generate_app_events.py        # → app_events.csv
-python charging_data_generator.py    # → charging_sessions.csv
-python station_data_generator.py     # → station_telemetry.csv (use --interval 5)
-python validate_app_events.py        # checks all 18 invariants + distributions
+python generators/generate_app_events.py        # → data/app_events.csv
+python generators/charging_data_generator.py    # → data/charging_sessions.csv
+python generators/station_data_generator.py     # → data/station_telemetry.csv (use --interval 5)
+python validation/validate_app_events.py        # checks all 18 invariants + distributions
 ```
 
 ### 3. Create Kafka topics
 
 ```bash
-python app_producer.py --create-topic
-python charging_producer.py --create-topic
-python station_producer.py --create-topic
+python producers/app_producer.py --create-topic
+python producers/charging_producer.py --create-topic
+python producers/station_producer.py --create-topic
 ```
 
 Each topic: 3 partitions, replication factor 1, 72 h retention.
@@ -92,9 +92,9 @@ Each topic: 3 partitions, replication factor 1, 72 h retention.
 ### 4. Stream data (each in its own terminal)
 
 ```bash
-python app_producer.py --speed 200
-python charging_producer.py --speed 200
-python station_producer.py --speed 200
+python producers/app_producer.py --speed 200
+python producers/charging_producer.py --speed 200
+python producers/station_producer.py --speed 200
 ```
 
 Useful flags (all three producers): `--dry-run` (no Kafka needed),
@@ -106,20 +106,20 @@ journey in one partition — required for funnel consumers) and `--json`.
 ### 5. Run the stream processor
 
 ```bash
-python stream_processor.py --mysql-host localhost --mysql-user root --mysql-password root --mysql-database EV-Stations
+python consumers/stream_processor.py --mysql-host localhost --mysql-user root --mysql-password root --mysql-database EV-Stations
 ```
 
 Writes `charging_sessions`, `station_telemetry`, `charging_risk_events` to
 MySQL and publishes every risk evaluation to `system-alerts`.
 
-> **Note:** `stream_processor.py` imports `mysql_writer` and
-> `import_dashboard.py` references `grafana/dashboard_ev_risk.json` —
-> both are expected alongside this repo for the MySQL/Grafana stage.
+> **Note:** `consumers/stream_processor.py` imports `mysql_writer` and
+> `dashboard/import_dashboard.py` expects `dashboard/dashboard_ev_risk.json` —
+> both are needed alongside this repo for the MySQL/Grafana stage.
 
 ### 6. Grafana dashboard
 
 ```bash
-python import_dashboard.py   # pushes dashboard to http://localhost:3000 (admin:admin)
+python dashboard/import_dashboard.py   # pushes dashboard to http://localhost:3000 (admin:admin)
 ```
 
 ## Kafka Topics
@@ -134,17 +134,15 @@ python import_dashboard.py   # pushes dashboard to http://localhost:3000 (admin:
 ## Repository Structure
 
 ```
-├── generate_app_events.py       # app funnel generator (seed 7)
-├── charging_data_generator.py   # charging session generator
-├── station_data_generator.py    # station telemetry generator
-├── app_events.csv / charging_sessions.csv / station_telemetry.csv
-├── app_events_rules.md          # full data dictionary + rules
-├── app_producer.py / charging_producer.py / station_producer.py
-├── stream_processor.py          # Kafka consumer → risk + MySQL + alerts
-├── risk_engine.py               # delay × congestion × surge × urgency scoring
-├── validate_app_events.py       # 18 invariants + distribution checks
-├── import_dashboard.py          # Grafana dashboard importer
-└── requirements.txt             # pandas, kafka-python
+├── producers/                 # Kafka producers (app, charging, station)
+├── consumers/                 # stream_processor.py + risk_engine.py
+├── generators/                # synthetic data generators (seeds 7 / 42)
+├── data/                      # app_events.csv, charging_sessions.csv, station_telemetry.csv
+├── docs/                      # app_events_rules.md (data dictionary + rules)
+├── validation/                # validate_app_events.py (18 invariants + distributions)
+├── dashboard/                 # import_dashboard.py (+ dashboard_ev_risk.json)
+├── README.md
+└── requirements.txt           # pandas, kafka-python
 ```
 
 ## Known Limitations

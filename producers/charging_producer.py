@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Kafka producer for station_telemetry.csv.
+Kafka producer for charging_sessions.csv.
 
 Topic:
-    station-telemetry
+    charging-telemetry
 
-Station ID is used as the Kafka key so events for a station remain ordered
-within its partition.
+Examples:
+    python charging_producer.py --create-topic
+    python charging_producer.py --dry-run --limit 20
+    python charging_producer.py --speed 200
+    python charging_producer.py --loop --speed 500
+
+The event_time column controls replay timing, exactly like app_producer.py.
 """
 
 from __future__ import annotations
@@ -19,30 +24,22 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-TOPIC = "station-telemetry"
-CSV_NAME = "station_telemetry.csv"
+TOPIC = "charging-telemetry"
+CSV_NAME = "charging_sessions.csv"
 BOOTSTRAP = "localhost:9092"
 PARTITIONS = 3
 RETENTION_HOURS = 72
 
+INT_COLS = {"journey_id", "user_id"}
 FLOAT_COLS = {
-    "utilization_pct",
-    "estimated_wait_min",
-    "average_session_duration_min",
-    "price_per_kwh",
-}
-INT_COLS = {
-    "total_bays",
-    "operational_bays",
-    "occupied_bays",
-    "available_bays",
-    "active_chargers",
-    "queue_length",
+    "vehicle_soc_start_pct", "target_soc_pct", "battery_capacity_kwh",
+    "charger_power_kw", "energy_required_kwh", "energy_delivered_kwh",
+    "expected_charge_duration_min", "actual_charge_duration_min",
+    "delay_ratio", "availability_ratio_at_start",
+    "estimated_wait_at_start_min",
 }
 BOOL_COLS = {
-    "is_weekend",
-    "is_fast_charger_site",
-    "incident_flag",
+    "is_fast_charger", "operational_anomaly", "severe_delay", "is_weekend"
 }
 
 try:
@@ -50,27 +47,36 @@ try:
     from kafka.admin import KafkaAdminClient, NewTopic
     from kafka import errors as kerr
     KAFKA_READY = True
-except Exception:
+    KAFKA_IMPORT_ERROR = None
+except Exception as exc:
     KAFKA_READY = False
+    KAFKA_IMPORT_ERROR = exc
     KafkaProducer = KafkaAdminClient = NewTopic = None
     kerr = None
 
-TopicExists = getattr(kerr, "TopicAlreadyExistsError", None) if KAFKA_READY else None
+if KAFKA_READY:
+    TopicExists = getattr(kerr, "TopicAlreadyExistsError", None)
+else:
+    TopicExists = None
 
 
 def find_csv():
     here = Path(__file__).resolve().parent
-    candidates = [here / CSV_NAME, Path.cwd() / CSV_NAME]
+    project_root = here.parent
+    candidates = [
+        here / CSV_NAME,
+        project_root / "data" / CSV_NAME,
+        Path.cwd() / CSV_NAME,
+        Path.cwd() / "data" / CSV_NAME,
+    ]
     for path in candidates:
         if path.exists():
             return path
     sys.exit(f"Could not find {CSV_NAME}. Looked in: {candidates}")
 
 
-def cast(key, value):
+def cast_value(key, value):
     value = (value or "").strip()
-    if key in INT_COLS:
-        return int(float(value))
     if key in FLOAT_COLS:
         return float(value)
     if key in BOOL_COLS:
@@ -82,17 +88,21 @@ def load_rows(limit=None):
     path = find_csv()
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            sys.exit(f"{path} has no header")
         rows = []
         for row in reader:
-            rows.append({
-                k: cast(k, v)
-                for k, v in row.items()
-                if k is not None
-            })
+            clean = {}
+            for key, value in row.items():
+                if key is not None:
+                    clean[key] = cast_value(key, value)
+            rows.append(clean)
 
     rows.sort(key=lambda r: r["event_time"])
     if limit:
         rows = rows[:limit]
+    if not rows:
+        sys.exit("No charging records found.")
     return rows, path
 
 
@@ -109,7 +119,10 @@ def timeouts(cls, seconds=8):
 
 def require_kafka():
     if not KAFKA_READY:
-        sys.exit("Install kafka-python with: pip install kafka-python")
+        sys.exit(
+            "kafka-python is not available. Install with:\n"
+            "pip install kafka-python"
+        )
 
 
 def create_topic(bootstrap):
@@ -133,7 +146,7 @@ def create_topic(bootstrap):
     except Exception as exc:
         if (TopicExists and isinstance(exc, TopicExists)) or \
            "TopicAlreadyExists" in type(exc).__name__:
-            print(f"exists {TOPIC}")
+            print(f"exists  {TOPIC}")
         else:
             raise
     finally:
@@ -157,13 +170,14 @@ def main():
         return
 
     rows, path = load_rows(args.limit)
-    if not rows:
-        sys.exit("No station telemetry records found.")
 
     print(f"source   : {path}")
     print(f"topic    : {TOPIC}")
     print(f"messages : {len(rows):,}")
-    print(f"stations : {len({r['selected_site_id'] for r in rows})}")
+    print(f"window   : {rows[0]['event_time']} -> {rows[-1]['event_time']}")
+
+    if args.dry_run:
+        print("mode     : DRY RUN")
 
     producer = None
     if not args.dry_run:
@@ -179,6 +193,7 @@ def main():
         )
 
     sent = 0
+    errors = 0
 
     try:
         while True:
@@ -202,23 +217,21 @@ def main():
                         key=row["selected_site_id"],
                         value=row,
                     )
-
                 sent += 1
 
                 if not args.quiet:
                     print(
                         f"{row['event_time']} | "
                         f"{row['selected_site_id']} | "
-                        f"availability={row['available_bays']}/"
-                        f"{row['total_bays']} | "
-                        f"wait={row['estimated_wait_min']}m",
+                        f"delay={row['delay_ratio']}x | "
+                        f"{row['operating_condition']}",
                         flush=True,
                     )
 
             if not args.loop:
                 break
 
-            print("--- station pass complete; looping ---")
+            print("--- charging pass complete; looping ---")
 
     except KeyboardInterrupt:
         print("\ninterrupted")

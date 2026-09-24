@@ -64,8 +64,9 @@ else:
 
 
 # --------------------------------------------------------------------------
-# Locate the CSV. Checks the script's own folder first, then the working
-# directory, so it works whether you run it from here or from elsewhere.
+# Locate the CSV. Checks the producers/ folder, then the project data/
+# folder, then the working directory, so it works whether you run it from
+# the repo root or from inside producers/.
 # --------------------------------------------------------------------------
 CSV_NAME = "app_events.csv"
 TOPIC = "app-events"
@@ -79,14 +80,22 @@ def find_csv():
         here = Path(__file__).resolve().parent
     except NameError:                        # notebook / REPL
         here = Path.cwd()
-    for path in (here / CSV_NAME, Path.cwd() / CSV_NAME):
+    project_root = here.parent
+    candidates = (
+        here / CSV_NAME,
+        project_root / "data" / CSV_NAME,
+        Path.cwd() / CSV_NAME,
+        Path.cwd() / "data" / CSV_NAME,
+    )
+    for path in candidates:
         if path.exists():
             return path
     sys.exit(
         f"Could not find {CSV_NAME}.\n"
         f"  looked in: {here}\n"
+        f"             {project_root / 'data'}\n"
         f"             {Path.cwd()}\n"
-        f"Put {CSV_NAME} next to this script, or cd into its folder."
+        f"Run from the repo root, or keep the CSV in data/."
     )
 
 

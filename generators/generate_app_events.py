@@ -13,6 +13,10 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from datetime import datetime, timedelta
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "app_events.csv"
 
 SEED = 7
 rng = np.random.default_rng(SEED)
@@ -261,7 +265,9 @@ df = pd.DataFrame(rows)[COLS].sort_values("event_time").reset_index(drop=True)
 assert df.isna().sum().sum() == 0, "nulls present"
 assert (df.astype(str) == "").sum().sum() == 0, "empty strings present"
 
-df.to_csv("/mnt/user-data/outputs/app_events.csv", index=False)
+DEFAULT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+df.to_csv(DEFAULT_OUTPUT, index=False)
+print(f"wrote     : {DEFAULT_OUTPUT}")
 
 print(f"rows    : {len(df):,}")
 print(f"columns : {len(COLS)}")

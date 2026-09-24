@@ -32,6 +32,11 @@ import numpy as np
 import pandas as pd
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_INPUT = PROJECT_ROOT / "data" / "app_events.csv"
+DEFAULT_OUTPUT = PROJECT_ROOT / "data" / "charging_sessions.csv"
+
+
 # ---------------------------------------------------------------------------
 # Guardrails / domain assumptions
 # ---------------------------------------------------------------------------
@@ -388,8 +393,8 @@ def generate(input_path: Path, output_path: Path, seed: int = 42, limit: int | N
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="app_events.csv")
-    parser.add_argument("--output", default="charging_sessions.csv")
+    parser.add_argument("--input", default=str(DEFAULT_INPUT))
+    parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args()

@@ -1,13 +1,23 @@
 import base64
 import json
+import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 DATA_SOURCE_UID = "cfz5f5bjqs5c0d"
-DASHBOARD_PATH = "grafana/dashboard_ev_risk.json"
+# dashboard JSON lives next to this script: dashboard/dashboard_ev_risk.json
+DASHBOARD_PATH = Path(__file__).resolve().parent / "dashboard_ev_risk.json"
 
-with open(DASHBOARD_PATH, encoding="utf-8") as f:
-    dash = json.load(f)
+try:
+    with open(DASHBOARD_PATH, encoding="utf-8") as f:
+        dash = json.load(f)
+except FileNotFoundError:
+    sys.exit(
+        f"Dashboard JSON not found: {DASHBOARD_PATH}\n"
+        f"Place your exported Grafana dashboard as "
+        f"dashboard/dashboard_ev_risk.json and re-run."
+    )
 
 
 def replace_uid(obj):
